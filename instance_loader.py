@@ -1,8 +1,74 @@
+#%%
 import os, sys
+import os.path as osp
 import random
 import numpy as np
 from functools import reduce
+from pathlib import Path
+import torch
+from torch_geometric.data import   Data, Dataset,InMemoryDataset, download_url
 
+#%%
+class GraphDataset(InMemoryDataset):
+    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
+        super().__init__(root, transform, pre_transform, pre_filter)
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+
+    @property
+    def raw_dir(self) -> str:
+        return osp.join(self.root, 'raw')
+
+    @property
+    def processed_dir(self) -> str:
+        return osp.join(self.root, 'processed')
+    
+    @property
+    def raw_file_names(self):
+        #return [f'/m0.graph']#[ self.raw_dir + '/' + x for x in os.listdir(self.raw_dir) ]
+        return [f for f in os.listdir(self.raw_dir) if osp.isfile(osp.join(self.raw_dir, f))]
+    @property
+    def processed_file_names(self):
+        #return ['not_implemented.pt']#[ self.processed_dir + '/' + x for x in os.listdir(self.processed_dir) ]
+        #return [f for f in os.listdir(self.processed_dir) if osp.isfile(osp.join(self.processed_dir, f))]
+        return ['data.pt']
+    def process(self):
+        data_list = []
+        idx = 0
+        for raw_path in self.raw_paths:
+            Ma,chrom_number,diff_edge = read_graph(raw_path)
+            col = torch.tensor([[1, chrom_number]], dtype=torch.int)
+            #generate initial graph coloring
+            M_v = torch.tensor(np.random.choice(chrom_number, np.max(Ma)), dtype=torch.int)
+            data = Data(x=M_v, edge_index=Ma, y=col, chromatic_number=chrom_number)
+            ##if self.pre_filter is not None and not self.pre_filter(data):
+            ##    continue
+
+            ##if self.pre_transform is not None:
+            ##    data = self.pre_transform(data)
+
+            ##torch.save(data, osp.join(self.processed_dir, f'data_{idx}.pt'))
+            data_list.append(data)
+            #generate adversarial entry
+            col = torch.tensor([0, chrom_number], dtype=torch.int)
+            #generate initial graph coloring
+            Ma_fake = np.vstack((Ma, diff_edge, np.flip(diff_edge)))
+            data = Data(x=M_v, edge_index=Ma_fake, y=col, chromatic_number=chrom_number)
+            ##torch.save(data, osp.join(self.processed_dir, f'data_{idx}_adversarial.pt'))
+            data_list.append(data)
+
+
+            idx += 1
+        data, slices = self.collate(data_list)
+        torch.save((data, slices), self.processed_paths[0])
+    """
+    def len(self):
+        return self.data.shape[0]
+    def get(self, idx):
+        data = torch.load(osp.join(self.processed_dir, f'data_{idx}.pt'))
+        return data
+    """
+#%%
 class InstanceLoader(object):
 
     def __init__(self,path):
@@ -61,7 +127,7 @@ class InstanceLoader(object):
         # M is the adjacency matrix
         M              = np.zeros((total_vertices,total_vertices))
         #compute binary adjacency matrix from vertex to colors
-        # MC is a matrix connecting each problem nodes to its colors candidates
+        # b dsdMC is a matrix connecting each problem nodes to its colors candidates
         MC = np.zeros((total_vertices, total_colors))        
 
         # Even index instances are SAT, odd are UNSAT
@@ -119,14 +185,15 @@ def read_graph(filepath):
         # Parse number of vertices
         while 'DIMENSION' not in line: line = f.readline();
         n = int(line.split()[1])
-        Ma = np.zeros((n,n),dtype=int)
-        
+        #Ma = np.zeros((n,2),dtype=int)
+        Ma = []
+
         # Parse edges
         while 'EDGE_DATA_SECTION' not in line: line = f.readline();
         line = f.readline()
         while '-1' not in line:
             i,j = [ int(x) for x in line.split() ]
-            Ma[i,j] = 1
+            Ma.append([i,j])#Ma[i,j] = 1
             line = f.readline()
         #end while
 
@@ -139,5 +206,11 @@ def read_graph(filepath):
         chrom_number = int(f.readline().strip())
 
     #end
-    return Ma,chrom_number,diff_edge
+    return np.array(Ma), chrom_number, diff_edge
 #end
+
+#%%
+#dataset = GraphDataset(root="data")
+# %%
+
+# %%
