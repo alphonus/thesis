@@ -13,7 +13,7 @@ class GraphDataset(InMemoryDataset):
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         super().__init__(root, transform, pre_transform, pre_filter)
         self.data, self.slices = torch.load(self.processed_paths[0])
-
+        self.enc_dim = 16
 
     @property
     def raw_dir(self) -> str:
@@ -37,10 +37,14 @@ class GraphDataset(InMemoryDataset):
         idx = 0
         for raw_path in self.raw_paths:
             Ma,chrom_number,diff_edge = read_graph(raw_path)
-            col = torch.tensor([[1, chrom_number]], dtype=torch.int)
+            col = torch.tensor([[1, chrom_number]], dtype=torch.float)
             #generate initial graph coloring
-            M_v = torch.tensor(np.random.choice(chrom_number, np.max(Ma)), dtype=torch.int)
-            data = Data(x=M_v, edge_index=Ma, y=col, chromatic_number=chrom_number)
+            
+            M_c = torch.tensor(np.expand_dims(np.random.choice(chrom_number, np.max(Ma)+1),axis=1), dtype=torch.float)
+            Ma_fake = np.vstack((Ma, diff_edge, np.flip(diff_edge))).T
+            Ma = torch.tensor(Ma.T, dtype=torch.long)
+
+            data = Data(x=M_c, edge_index=Ma, y=col,  chromatic_number=chrom_number)
             ##if self.pre_filter is not None and not self.pre_filter(data):
             ##    continue
 
@@ -50,10 +54,12 @@ class GraphDataset(InMemoryDataset):
             ##torch.save(data, osp.join(self.processed_dir, f'data_{idx}.pt'))
             data_list.append(data)
             #generate adversarial entry
-            col = torch.tensor([0, chrom_number], dtype=torch.int)
+            col = torch.tensor([[0, chrom_number]], dtype=torch.float)
             #generate initial graph coloring
-            Ma_fake = np.vstack((Ma, diff_edge, np.flip(diff_edge)))
-            data = Data(x=M_v, edge_index=Ma_fake, y=col, chromatic_number=chrom_number)
+            
+            Ma_fake = torch.tensor(Ma_fake, dtype=torch.long)
+
+            data = Data(x=M_c, edge_index=Ma_fake, y=col, chromatic_number=chrom_number)
             ##torch.save(data, osp.join(self.processed_dir, f'data_{idx}_adversarial.pt'))
             data_list.append(data)
 
@@ -196,17 +202,17 @@ def read_graph(filepath):
             Ma.append([i,j])#Ma[i,j] = 1
             line = f.readline()
         #end while
-
+        _min = np.array(Ma).min()
         # Parse diff edge
         while 'DIFF_EDGE' not in line: line = f.readline();
-        diff_edge = [ int(x) for x in f.readline().split() ]
+        diff_edge = [ int(x)-_min for x in f.readline().split() ]
 
         # Parse target cost
         while 'CHROM_NUMBER' not in line: line = f.readline();
         chrom_number = int(f.readline().strip())
 
     #end
-    return np.array(Ma), chrom_number, diff_edge
+    return np.array(Ma)-_min, chrom_number, diff_edge
 #end
 
 #%%
